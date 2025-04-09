@@ -1,0 +1,1 @@
+ERROR:root:SQL Error: near "exit": syntax error
