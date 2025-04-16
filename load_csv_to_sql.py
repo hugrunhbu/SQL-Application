@@ -2,6 +2,47 @@ import pandas as pd
 import sqlite3
 import os
 import logging
+import openai
+from dotenv import load_dotenv
+
+# load .env file with your API key
+load_dotenv()
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+
+def get_schema_string(cursor):
+    # Generate a string that describes the schema of all tables.
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+    tables = [row[0] for row in cursor.fetchall()]
+    schema_parts = []
+    for table in tables:
+        cursor.execute(f"PRAGMA table_info({table});")
+        cols = cursor.fetchall()
+        col_defs = ", ".join(f"{col[1]} ({col[2]})" for col in cols)
+        schema_parts.append(f"{table}: {col_defs}")
+    return "\n".join(schema_parts)
+
+def generate_sql_from_prompt(prompt, schema):
+    """Ask OpenAI to turn a natural language request into a SQL query."""
+    full_prompt = f"""
+You are an AI assistant that converts natural language into SQLite SQL queries.
+Here is the schema of the database:
+{schema}
+
+User Request: "{prompt}"
+
+Only output the SQL query without explanation.
+"""
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",  # or gpt-4 if you have access
+            messages=[{"role": "user", "content": full_prompt}],
+            temperature=0
+        )
+        return response["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        logging.error(f"OpenAI API error: {e}")
+        return None
 
 # set up logging
 logging.basicConfig(filename='error_log.txt', level=logging.ERROR)
@@ -102,6 +143,7 @@ def run_cli():
   load         → Load a CSV file into the database
   list         → List current tables
   query        → Run a SQL query
+  ask          → ask question in natural language
   exit         → Exit the program
 """)
         elif user_input == "load":
@@ -126,6 +168,23 @@ def run_cli():
         elif user_input == "exit":
             print("Goodbye!")
             break
+        elif user_input == "ask":
+            prompt = input("Ask your question: ").strip()
+            schema = get_schema_string(cursor)
+            sql = generate_sql_from_prompt(prompt, schema)
+
+            if sql:
+                print(f"Generated SQL:\n{sql}")
+                try:
+                    result = cursor.execute(sql)
+                    rows = result.fetchall()
+                    for row in rows:
+                        print(row)
+                except Exception as e:
+                    print("Error running generated SQL.")
+                    logging.error(f"Bad AI SQL: {sql} — Error: {e}")
+            else:
+                print("Could not generate SQL from prompt.")
         else:
             print("Unknown command. Type 'help' to see options.")
 
